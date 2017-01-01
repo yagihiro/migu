@@ -1,0 +1,3 @@
+From golang:1.7.4
+RUN curl https://glide.sh/get | GOBIN=/bin sh
+RUN GOBIN=/bin go get github.com/cespare/reflex
