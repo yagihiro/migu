@@ -5,6 +5,8 @@ import (
 	"go/ast"
 	"go/token"
 	"strings"
+
+	"github.com/naoina/migu/dialect"
 )
 
 // Index is table index
@@ -46,4 +48,19 @@ func (index *Index) AsASTField(indexNo int) (*ast.Field, error) {
 		}
 	}
 	return field, nil
+}
+
+func (index *Index) AsCreateTableDefinition(d dialect.Dialect) string {
+	quotedNames := make([]string, 0, len(index.ColumnNames))
+	for _, name := range index.ColumnNames {
+		quotedNames = append(quotedNames, d.Quote(name))
+	}
+	if index.isPrimaryKey() {
+		return fmt.Sprintf("PRIMARY KEY (%s)", strings.Join(quotedNames, ","))
+	}
+	keyType := "INDEX"
+	if index.isUniqueKey() {
+		keyType = "UNIQUE"
+	}
+	return fmt.Sprintf("%s %s (%s)", keyType, d.Quote(index.Name), strings.Join(quotedNames, ","))
 }

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"go/ast"
 	"go/token"
+	"reflect"
 	"strings"
 )
 
@@ -158,4 +159,25 @@ func (schema *columnSchema) hasUniqueKey() bool {
 
 func (schema *columnSchema) hasSize() bool {
 	return schema.DataType == "varchar" && schema.CharacterMaximumLength != nil && *schema.CharacterMaximumLength != uint64(255)
+}
+
+func (schema *columnSchema) HasDifference(newColumn *field) bool {
+	goTypes, err := schema.GoFieldTypes()
+	if err != nil {
+		panic(err)
+	}
+	if !inStrings(goTypes, newColumn.Type) {
+		return true
+	}
+
+	fieldAST, err := schema.fieldAST()
+	if err != nil {
+		panic(err)
+	}
+	currentColumn, err := newField(newColumn.Type, fieldAST)
+	currentColumn.Name = newColumn.Name
+	if err != nil {
+		panic(err)
+	}
+	return !reflect.DeepEqual(currentColumn, newColumn)
 }
