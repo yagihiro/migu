@@ -12,7 +12,7 @@ import (
 // Index is table index
 type Index struct {
 	Name        string
-	NonUnique   bool
+	Unique      bool
 	ColumnNames []string
 }
 
@@ -21,7 +21,7 @@ func (index *Index) isPrimaryKey() bool {
 }
 
 func (index *Index) isUniqueKey() bool {
-	return !index.NonUnique && !index.isPrimaryKey()
+	return index.Unique && !index.isPrimaryKey()
 }
 
 func (index *Index) AsASTField(indexNo int) (*ast.Field, error) {

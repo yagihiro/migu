@@ -309,7 +309,7 @@ ORDER BY
 		}
 		if _, exists := indexMap[tableName][indexName]; !exists {
 			indexMap[tableName][indexName] = &Index{
-				NonUnique:   nonUnique == 1,
+				Unique:      nonUnique == 0,
 				Name:        indexName,
 				ColumnNames: []string{},
 			}
@@ -558,9 +558,7 @@ func parseIndexStructTag(tag reflect.StructTag) (*Index, error) {
 	if migu == "" {
 		return nil, fmt.Errorf("migu: parseIndexStructTag: index tag must not be empty")
 	}
-	index := &Index{
-		NonUnique: true,
-	}
+	index := &Index{}
 	isPrimaryKey := false
 	for _, opt := range strings.Split(migu, tagSeparater) {
 		optval := strings.SplitN(opt, ":", 2)
@@ -586,14 +584,14 @@ func parseIndexStructTag(tag reflect.StructTag) (*Index, error) {
 				index.ColumnNames = params[1:]
 			}
 		case tagUnique:
-			index.NonUnique = false
+			index.Unique = true
 		default:
 			return nil, fmt.Errorf("migu: parseIndexStructTag: unknown option: `%s'", opt)
 		}
 	}
 	if isPrimaryKey {
 		index.Name = "PRIMARY"
-		index.NonUnique = false
+		index.Unique = true
 	}
 	return index, nil
 }
