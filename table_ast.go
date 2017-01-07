@@ -182,11 +182,17 @@ func (t *TableAST) AlterTableQueries(d dialect.Dialect, currentTable *Table) ([]
 
 func (t *TableAST) GenerateAddFieldSQLs(d dialect.Dialect, currentColumMap map[string]*columnSchema) ([]string, error) {
 	sqls := make([]string, 0)
-	for _, column := range t.MustColumns() {
+	expectedColumns := t.MustColumns()
+	for i, column := range expectedColumns {
 		if _, exist := currentColumMap[column.Name]; exist {
 			continue
 		}
-		sqls = append(sqls, fmt.Sprintf(`ADD %s`, columnSQL(d, column)))
+		position := "FIRST"
+		if i > 0 {
+			prev := expectedColumns[i-1]
+			position = fmt.Sprintf(`AFTER %s`, d.Quote(prev.Name))
+		}
+		sqls = append(sqls, fmt.Sprintf(`ADD %s %s`, columnSQL(d, column), position))
 	}
 	return sqls, nil
 }
