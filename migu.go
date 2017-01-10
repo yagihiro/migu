@@ -13,8 +13,8 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/astronoka/migu/dialect"
 	"github.com/naoina/go-stringutil"
-	"github.com/naoina/migu/dialect"
 )
 
 // Sync synchronizes the schema between Go's struct and the database.
@@ -48,80 +48,37 @@ func Sync(db *sql.DB, filename string, src interface{}) error {
 
 // Diff returns SQLs for schema synchronous between database and Go's struct.
 func Diff(db *sql.DB, filename string, src interface{}) ([]string, error) {
-	structASTMap, err := makeStructASTMap(filename, src)
+	expectedTableASTMap, err := makeTableASTMap(filename, src)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("migu: Diff error. " + err.Error())
 	}
-	structMap := map[string][]*field{}
-	for name, structAST := range structASTMap {
-		for _, fld := range structAST.Fields.List {
-			typeName, err := detectTypeName(fld)
-			if err != nil {
-				return nil, err
-			}
-			f, err := newField(typeName, fld)
-			if err != nil {
-				return nil, err
-			}
-			if f.Ignore {
-				continue
-			}
-			for _, ident := range fld.Names {
-				field := *f
-				field.Name = ident.Name
-				structMap[name] = append(structMap[name], &field)
-			}
-		}
-	}
-	tableMap, err := getTableMap(db)
+	currentTableMap, err := getAllTables(db)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("migu: Diff error. " + err.Error())
 	}
-	names := make([]string, 0, len(structMap))
-	for name := range structMap {
-		names = append(names, name)
-	}
-	sort.Strings(names)
 	d := &dialect.MySQL{}
 	var migrations []string
-	for _, name := range names {
-		model := structMap[name]
-		columns, ok := tableMap[name]
-		tableName := stringutil.ToSnakeCase(name)
-		if !ok {
-			columns := make([]string, len(model))
-			for i, f := range model {
-				columns[i] = columnSQL(d, f)
+	for _, name := range sortTableASTNames(expectedTableASTMap) {
+		tableAST := expectedTableASTMap[name]
+		currentTable, alreadyExist := currentTableMap[name]
+		if !alreadyExist {
+			queries, err := tableAST.CreateTableQuery(d)
+			if err != nil {
+				return nil, fmt.Errorf("migu: Diff error. " + err.Error())
 			}
-			migrations = append(migrations, fmt.Sprintf(`CREATE TABLE %s (
-  %s
-)`, d.Quote(tableName), strings.Join(columns, ",\n  ")))
+			migrations = append(migrations, queries...)
 		} else {
-			table := map[string]*columnSchema{}
-			for _, column := range columns {
-				table[stringutil.ToUpperCamelCase(column.ColumnName)] = column
+			queries, err := tableAST.AlterTableQueries(d, currentTable)
+			if err != nil {
+				return nil, fmt.Errorf("migu: Diff error. " + err.Error())
 			}
-			var modifySQLs []string
-			var dropSQLs []string
-			for _, f := range model {
-				m, d, err := alterTableSQLs(d, tableName, table, f)
-				if err != nil {
-					return nil, err
-				}
-				modifySQLs = append(modifySQLs, m...)
-				dropSQLs = append(dropSQLs, d...)
-				delete(table, f.Name)
-			}
-			migrations = append(migrations, append(dropSQLs, modifySQLs...)...)
-			for _, f := range table {
-				migrations = append(migrations, fmt.Sprintf(`ALTER TABLE %s DROP %s`, d.Quote(tableName), d.Quote(stringutil.ToSnakeCase(f.ColumnName))))
-			}
+			migrations = append(migrations, queries...)
 		}
-		delete(structMap, name)
-		delete(tableMap, name)
+		delete(expectedTableASTMap, name)
+		delete(currentTableMap, name)
 	}
-	for name := range tableMap {
-		migrations = append(migrations, fmt.Sprintf(`DROP TABLE %s`, d.Quote(stringutil.ToSnakeCase(name))))
+	for name := range currentTableMap {
+		migrations = append(migrations, fmt.Sprintf(`DROP TABLE %s`, d.Quote(toSchemaTableName(name))))
 	}
 	return migrations, nil
 }
@@ -159,7 +116,7 @@ func newField(typeName string, f *ast.Field) (*field, error) {
 
 // Fprint generates Go's structs from database schema and writes to output.
 func Fprint(output io.Writer, db *sql.DB) error {
-	tableMap, err := getTableMap(db)
+	tableMap, err := getAllTables(db)
 	if err != nil {
 		return err
 	}
@@ -174,13 +131,37 @@ func Fprint(output io.Writer, db *sql.DB) error {
 	}
 	sort.Strings(names)
 	for _, name := range names {
-		s, err := structAST(name, tableMap[name])
+		table := tableMap[name]
+		err := fprintTable(output, name, table)
 		if err != nil {
 			return err
 		}
-		if err := fprintln(output, s); err != nil {
+		err = fprintIndex(output, name, table)
+		if err != nil {
 			return err
 		}
+	}
+	return nil
+}
+
+func fprintTable(output io.Writer, name string, table *Table) error {
+	s, err := structAST(name, table)
+	if err != nil {
+		return err
+	}
+	if err := fprintln(output, s); err != nil {
+		return err
+	}
+	return nil
+}
+
+func fprintIndex(output io.Writer, tableName string, table *Table) error {
+	s, err := indexStructAST(tableName, table.Indexes)
+	if err != nil {
+		return err
+	}
+	if err := fprintln(output, s); err != nil {
+		return err
 	}
 	return nil
 }
@@ -191,18 +172,45 @@ const (
 	tagAutoIncrement = "autoincrement"
 	tagUnique        = "unique"
 	tagSize          = "size"
+	tagIndex         = "index"
 	tagIgnore        = "-"
+	tagSeparater     = ";"
 )
 
-func getTableMap(db *sql.DB) (map[string][]*columnSchema, error) {
+func getAllTables(db *sql.DB) (map[string]*Table, error) {
 	dbname, err := getCurrentDBName(db)
 	if err != nil {
 		return nil, err
 	}
+	tableColumns, err := getTableColumns(db, dbname)
+	if err != nil {
+		return nil, fmt.Errorf("migu: get table map failed. " + err.Error())
+	}
+	tables := make(map[string]*Table)
+	for tableName, columns := range tableColumns {
+		tables[tableName] = &Table{
+			Columns: columns,
+		}
+	}
+
 	indexMap, err := getIndexMap(db, dbname)
 	if err != nil {
 		return nil, err
 	}
+	for tableName, table := range tables {
+		indexes, exist := indexMap[tableName]
+		if !exist {
+			continue
+		}
+		for _, index := range indexes {
+			table.Indexes = append(table.Indexes, index)
+		}
+	}
+
+	return tables, nil
+}
+
+func getTableColumns(db *sql.DB, dbname string) (map[string][]*columnSchema, error) {
 	query := `
 SELECT
   TABLE_NAME,
@@ -226,7 +234,7 @@ ORDER BY TABLE_NAME, ORDINAL_POSITION`
 		return nil, err
 	}
 	defer rows.Close()
-	tableMap := map[string][]*columnSchema{}
+	tableColumns := map[string][]*columnSchema{}
 	for rows.Next() {
 		schema := &columnSchema{}
 		if err := rows.Scan(
@@ -246,19 +254,12 @@ ORDER BY TABLE_NAME, ORDINAL_POSITION`
 		); err != nil {
 			return nil, err
 		}
-		tableName := stringutil.ToUpperCamelCase(schema.TableName)
-		tableMap[tableName] = append(tableMap[tableName], schema)
-		if tableIndex, exists := indexMap[schema.TableName]; exists {
-			if info, exists := tableIndex[schema.ColumnName]; exists {
-				schema.NonUnique = info.NonUnique
-				schema.IndexName = info.IndexName
-			}
-		}
+		tableColumns[schema.TableName] = append(tableColumns[schema.TableName], schema)
 	}
 	if err := rows.Err(); err != nil {
 		return nil, err
 	}
-	return tableMap, nil
+	return tableColumns, nil
 }
 
 func getCurrentDBName(db *sql.DB) (string, error) {
@@ -267,39 +268,54 @@ func getCurrentDBName(db *sql.DB) (string, error) {
 	return dbname.String, err
 }
 
-type indexInfo struct {
-	NonUnique int64
-	IndexName string
-}
-
-func getIndexMap(db *sql.DB, dbname string) (map[string]map[string]indexInfo, error) {
+func getIndexMap(db *sql.DB, dbname string) (map[string]map[string]*Index, error) {
 	query := `
 SELECT
   TABLE_NAME,
-  COLUMN_NAME,
   NON_UNIQUE,
-  INDEX_NAME
+  INDEX_NAME,
+  SEQ_IN_INDEX,
+  COLUMN_NAME,
+  COLLATION
 FROM information_schema.STATISTICS
-WHERE TABLE_SCHEMA = ?`
+WHERE TABLE_SCHEMA = ?
+ORDER BY
+  TABLE_NAME,
+  INDEX_NAME,
+  SEQ_IN_INDEX
+`
 	rows, err := db.Query(query, dbname)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	indexMap := make(map[string]map[string]indexInfo)
+	// map[TABLE_NAME][INDEX_NAME]index
+	// https://dev.mysql.com/doc/refman/5.6/en/show-index.html
+	indexMap := make(map[string]map[string]*Index)
 	for rows.Next() {
 		var (
 			tableName  string
+			nonUnique  int64
+			indexName  string
+			seqInIndex int64
 			columnName string
-			index      indexInfo
+			collation  *string
 		)
-		if err := rows.Scan(&tableName, &columnName, &index.NonUnique, &index.IndexName); err != nil {
+		if err := rows.Scan(&tableName, &nonUnique, &indexName, &seqInIndex, &columnName, &collation); err != nil {
 			return nil, err
 		}
 		if _, exists := indexMap[tableName]; !exists {
-			indexMap[tableName] = make(map[string]indexInfo)
+			indexMap[tableName] = make(map[string]*Index)
 		}
-		indexMap[tableName][columnName] = index
+		if _, exists := indexMap[tableName][indexName]; !exists {
+			indexMap[tableName][indexName] = &Index{
+				Unique:      nonUnique == 0,
+				Name:        indexName,
+				ColumnNames: []string{},
+			}
+		}
+		index := indexMap[tableName][indexName]
+		index.ColumnNames = append(index.ColumnNames, columnName)
 	}
 	return indexMap, rows.Err()
 }
@@ -321,26 +337,49 @@ func fprintln(output io.Writer, decl ast.Decl) error {
 	return nil
 }
 
-func makeStructASTMap(filename string, src interface{}) (map[string]*ast.StructType, error) {
+func makeTableASTMap(filename string, src interface{}) (map[string]*TableAST, error) {
 	fset := token.NewFileSet()
 	f, err := parser.ParseFile(fset, filename, src, parser.ParseComments)
 	if err != nil {
 		return nil, err
 	}
 	ast.FileExports(f)
-	structASTMap := map[string]*ast.StructType{}
+	tableASTMap := map[string]*TableAST{}
 	ast.Inspect(f, func(n ast.Node) bool {
 		switch x := n.(type) {
 		case *ast.TypeSpec:
 			if t, ok := x.Type.(*ast.StructType); ok {
-				structASTMap[x.Name.Name] = t
+				tableName := x.Name.Name
+				isIndex := false
+				if strings.HasSuffix(x.Name.Name, "Index") {
+					tableName = strings.TrimSuffix(x.Name.Name, "Index")
+					isIndex = true
+				}
+				schemaTableName := toSchemaTableName(tableName)
+				if _, exist := tableASTMap[schemaTableName]; !exist {
+					tableASTMap[schemaTableName] = &TableAST{Name: tableName}
+				}
+				if isIndex {
+					tableASTMap[schemaTableName].IndexSchema = t
+				} else {
+					tableASTMap[schemaTableName].Schema = t
+				}
 			}
 			return false
 		default:
 			return true
 		}
 	})
-	return structASTMap, nil
+	return tableASTMap, nil
+}
+
+func sortTableASTNames(tableASTMap map[string]*TableAST) []string {
+	names := make([]string, 0, len(tableASTMap))
+	for name := range tableASTMap {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	return names
 }
 
 func detectTypeName(n ast.Node) (string, error) {
@@ -368,7 +407,7 @@ func detectTypeName(n ast.Node) (string, error) {
 
 func columnSQL(d dialect.Dialect, f *field) string {
 	colType, null := d.ColumnType(f.Type, f.Size, f.AutoIncrement)
-	column := []string{d.Quote(stringutil.ToSnakeCase(f.Name)), colType}
+	column := []string{d.Quote(toSchemaFieldName(f.Name)), colType}
 	if !null {
 		column = append(column, "NOT NULL")
 	}
@@ -390,58 +429,10 @@ func columnSQL(d dialect.Dialect, f *field) string {
 	return strings.Join(column, " ")
 }
 
-func alterTableSQLs(d dialect.Dialect, tableName string, table map[string]*columnSchema, f *field) (modifySQLs, dropSQLs []string, err error) {
-	column, exists := table[f.Name]
-	if !exists {
-		return []string{
-			fmt.Sprintf(`ALTER TABLE %s ADD %s`, d.Quote(tableName), columnSQL(d, f)),
-		}, nil, nil
-	}
-	types, err := column.GoFieldTypes()
-	if err != nil {
-		return nil, nil, err
-	}
-	oldFieldAST, err := column.fieldAST()
-	if err != nil {
-		return nil, nil, err
-	}
-	oldF, err := newField(f.Type, oldFieldAST)
-	if err != nil {
-		return nil, nil, err
-	}
-	oldF.Name = f.Name
-	if !inStrings(types, f.Type) || !reflect.DeepEqual(oldF, f) {
-		tableName = d.Quote(tableName)
-		colSQL := columnSQL(d, f)
-		modifySQLs = append(modifySQLs, fmt.Sprintf(`ALTER TABLE %s MODIFY %s`, tableName, colSQL))
-		var drop []string
-		if oldF.PrimaryKey != f.PrimaryKey && !f.PrimaryKey {
-			drop = append(drop, `DROP PRIMARY KEY`)
-			if column.hasAutoIncrement() {
-				drop = append(drop, `MODIFY `+colSQL)
-				modifySQLs = nil
-			}
-		}
-		if oldF.Unique != f.Unique && !f.Unique {
-			if column.hasPrimaryKey() {
-				drop = append(drop, `DROP PRIMARY KEY`)
-			} else {
-				drop = append(drop, `DROP INDEX `+column.IndexName)
-			}
-		}
-		if len(drop) > 0 {
-			dropSQLs = append(dropSQLs, fmt.Sprintf(`ALTER TABLE %s %s`, tableName, strings.Join(drop, ", ")))
-		}
-	}
-	return modifySQLs, dropSQLs, nil
-}
-
-func hasDatetimeColumn(t map[string][]*columnSchema) bool {
-	for _, schemas := range t {
-		for _, schema := range schemas {
-			if schema.DataType == "datetime" {
-				return true
-			}
+func hasDatetimeColumn(tables map[string]*Table) bool {
+	for _, table := range tables {
+		if table.HasDatetimeColumn() {
+			return true
 		}
 	}
 	return false
@@ -461,9 +452,9 @@ func importAST(pkg string) ast.Decl {
 	}
 }
 
-func structAST(name string, schemas []*columnSchema) (ast.Decl, error) {
+func structAST(name string, table *Table) (ast.Decl, error) {
 	var fields []*ast.Field
-	for _, schema := range schemas {
+	for _, schema := range table.Columns {
 		f, err := schema.fieldAST()
 		if err != nil {
 			return nil, err
@@ -474,7 +465,40 @@ func structAST(name string, schemas []*columnSchema) (ast.Decl, error) {
 		Tok: token.TYPE,
 		Specs: []ast.Spec{
 			&ast.TypeSpec{
-				Name: ast.NewIdent(stringutil.ToUpperCamelCase(name)),
+				Name: ast.NewIdent(toPublicStructName(name)),
+				Type: &ast.StructType{
+					Fields: &ast.FieldList{
+						List: fields,
+					},
+				},
+			},
+		},
+	}, nil
+}
+
+func indexStructAST(tableName string, indexes []*Index) (ast.Decl, error) {
+	names := make([]string, 0, len(indexes))
+	indexMap := make(map[string]*Index)
+	for _, index := range indexes {
+		names = append(names, index.Name)
+		indexMap[index.Name] = index
+	}
+	sort.Strings(names)
+
+	var fields []*ast.Field
+	for i, name := range names {
+		index := indexMap[name]
+		f, err := index.AsASTField(i)
+		if err != nil {
+			return nil, fmt.Errorf("migu: indexStructAST: " + err.Error())
+		}
+		fields = append(fields, f)
+	}
+	return &ast.GenDecl{
+		Tok: token.TYPE,
+		Specs: []ast.Spec{
+			&ast.TypeSpec{
+				Name: ast.NewIdent(toPublicStructName(tableName) + "Index"),
 				Type: &ast.StructType{
 					Fields: &ast.FieldList{
 						List: fields,
@@ -490,7 +514,7 @@ func parseStructTag(f *field, tag reflect.StructTag) error {
 	if migu == "" {
 		return nil
 	}
-	for _, opt := range strings.Split(migu, ",") {
+	for _, opt := range strings.Split(migu, tagSeparater) {
 		optval := strings.SplitN(opt, ":", 2)
 		switch optval[0] {
 		case tagDefault:
@@ -518,157 +542,72 @@ func parseStructTag(f *field, tag reflect.StructTag) error {
 			return fmt.Errorf("unknown option: `%s'", opt)
 		}
 	}
+	if !isSizeRequiredType(f.Type) {
+		f.Size = 0
+	}
 	return nil
 }
 
-type columnSchema struct {
-	TableName              string
-	ColumnName             string
-	OrdinalPosition        int64
-	ColumnDefault          sql.NullString
-	IsNullable             string
-	DataType               string
-	CharacterMaximumLength *uint64
-	CharacterOctetLength   sql.NullInt64
-	NumericPrecision       sql.NullInt64
-	NumericScale           sql.NullInt64
-	ColumnType             string
-	ColumnKey              string
-	Extra                  string
-	ColumnComment          string
-	NonUnique              int64
-	IndexName              string
+func isSizeRequiredType(typeName string) bool {
+	types := []string{"string", "*string", "sql.NullString"}
+	return inStrings(types, typeName)
 }
 
-func (schema *columnSchema) fieldAST() (*ast.Field, error) {
-	types, err := schema.GoFieldTypes()
-	if err != nil {
-		return nil, err
+func parseIndexStructTag(tag reflect.StructTag) (*Index, error) {
+	migu := tag.Get("migu")
+	if migu == "" {
+		return nil, fmt.Errorf("migu: parseIndexStructTag: index tag must not be empty")
 	}
-	field := &ast.Field{
-		Names: []*ast.Ident{
-			ast.NewIdent(stringutil.ToUpperCamelCase(schema.ColumnName)),
-		},
-		Type: ast.NewIdent(types[0]),
-	}
-	var tags []string
-	if schema.ColumnDefault.Valid {
-		tags = append(tags, tagDefault+":"+schema.ColumnDefault.String)
-	}
-	if schema.hasPrimaryKey() {
-		tags = append(tags, tagPrimaryKey)
-	}
-	if schema.hasAutoIncrement() {
-		tags = append(tags, tagAutoIncrement)
-	}
-	if schema.hasUniqueKey() {
-		tags = append(tags, tagUnique)
-	}
-	if schema.hasSize() {
-		tags = append(tags, fmt.Sprintf("%s:%d", tagSize, *schema.CharacterMaximumLength))
-	}
-	if len(tags) > 0 {
-		field.Tag = &ast.BasicLit{
-			Kind:  token.STRING,
-			Value: fmt.Sprintf("`migu:\"%s\"`", strings.Join(tags, ",")),
+	index := &Index{}
+	isPrimaryKey := false
+	for _, opt := range strings.Split(migu, tagSeparater) {
+		optval := strings.SplitN(opt, ":", 2)
+		if len(optval) < 1 {
+			return nil, fmt.Errorf("migu: parseIndexStructTag: 'migu' tag must specify values")
 		}
-	}
-	if schema.ColumnComment != "" {
-		field.Comment = &ast.CommentGroup{
-			List: []*ast.Comment{
-				{Text: " // " + schema.ColumnComment},
-			},
-		}
-	}
-	return field, nil
-}
-
-func (schema *columnSchema) GoFieldTypes() ([]string, error) {
-	switch schema.DataType {
-	case "tinyint":
-		if schema.isUnsigned() {
-			if schema.isNullable() {
-				return []string{"*uint8"}, nil
+		switch optval[0] {
+		case tagPrimaryKey:
+			isPrimaryKey = true
+		case tagIndex:
+			if len(optval) < 2 {
+				return nil, fmt.Errorf("migu: parseIndexStructTag: '%s' tag must specify parameters", tagIndex)
 			}
-			return []string{"uint8"}, nil
-		}
-		if schema.isNullable() {
-			return []string{"*int8", "*bool", "sql.NullBool"}, nil
-		}
-		return []string{"int8", "bool"}, nil
-	case "smallint":
-		if schema.isUnsigned() {
-			if schema.isNullable() {
-				return []string{"*uint16"}, nil
+			params := strings.SplitN(optval[1], ",", -1)
+			if len(params) < 1 {
+				return nil, fmt.Errorf("migu: parseIndexStructTag: '%s' tag must specify one column at least", tagIndex)
 			}
-			return []string{"uint16"}, nil
-		}
-		if schema.isNullable() {
-			return []string{"*int16"}, nil
-		}
-		return []string{"int16"}, nil
-	case "mediumint", "int":
-		if schema.isUnsigned() {
-			if schema.isNullable() {
-				return []string{"*uint", "*uint32"}, nil
+			if len(params) == 1 {
+				index.Name = params[0]
+				index.ColumnNames = params
+			} else {
+				index.Name = params[0]
+				index.ColumnNames = params[1:]
 			}
-			return []string{"uint", "uint32"}, nil
+		case tagUnique:
+			index.Unique = true
+		default:
+			return nil, fmt.Errorf("migu: parseIndexStructTag: unknown option: `%s'", opt)
 		}
-		if schema.isNullable() {
-			return []string{"*int", "*int32"}, nil
-		}
-		return []string{"int", "int32"}, nil
-	case "bigint":
-		if schema.isUnsigned() {
-			if schema.isNullable() {
-				return []string{"*uint64"}, nil
-			}
-			return []string{"uint64"}, nil
-		}
-		if schema.isNullable() {
-			return []string{"*int64", "sql.NullInt64"}, nil
-		}
-		return []string{"int64"}, nil
-	case "varchar", "text", "mediumtext", "longtext":
-		if schema.isNullable() {
-			return []string{"*string", "sql.NullString"}, nil
-		}
-		return []string{"string"}, nil
-	case "datetime":
-		if schema.isNullable() {
-			return []string{"*time.Time"}, nil
-		}
-		return []string{"time.Time"}, nil
-	case "double":
-		if schema.isNullable() {
-			return []string{"*float32", "*float64", "sql.NullFloat64"}, nil
-		}
-		return []string{"float32", "float64"}, nil
-	default:
-		return nil, fmt.Errorf("BUG: unexpected data type: %s", schema.DataType)
 	}
+	if isPrimaryKey {
+		index.Name = "PRIMARY"
+		index.Unique = true
+	}
+	return index, nil
 }
 
-func (schema *columnSchema) isUnsigned() bool {
-	return strings.Contains(schema.ColumnType, "unsigned")
+func toPublicStructName(s string) string {
+	return stringutil.ToUpperCamelCase(s)
 }
 
-func (schema *columnSchema) isNullable() bool {
-	return strings.ToUpper(schema.IsNullable) == "YES"
+func toStructPublicFieldName(s string) string {
+	return stringutil.ToUpperCamelCase(s)
 }
 
-func (schema *columnSchema) hasPrimaryKey() bool {
-	return schema.ColumnKey == "PRI" && strings.ToUpper(schema.IndexName) == "PRIMARY"
+func toSchemaTableName(s string) string {
+	return stringutil.ToSnakeCase(s)
 }
 
-func (schema *columnSchema) hasAutoIncrement() bool {
-	return schema.Extra == "auto_increment"
-}
-
-func (schema *columnSchema) hasUniqueKey() bool {
-	return schema.ColumnKey != "" && schema.IndexName != "" && !schema.hasPrimaryKey()
-}
-
-func (schema *columnSchema) hasSize() bool {
-	return schema.DataType == "varchar" && schema.CharacterMaximumLength != nil && *schema.CharacterMaximumLength != uint64(255)
+func toSchemaFieldName(s string) string {
+	return stringutil.ToSnakeCase(s)
 }

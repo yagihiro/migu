@@ -4,8 +4,8 @@ import (
 	"database/sql"
 	"fmt"
 
+	"github.com/astronoka/migu"
 	_ "github.com/go-sql-driver/mysql"
-	"github.com/naoina/migu"
 )
 
 func main() {

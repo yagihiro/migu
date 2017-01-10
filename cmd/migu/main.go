@@ -12,9 +12,12 @@ import (
 )
 
 var (
-	progName = filepath.Base(os.Args[0])
-	option   struct {
-		Help bool `long:"help"`
+	progName   = filepath.Base(os.Args[0])
+	version    = "v0.0.0"
+	commitHash = "deadbeaf"
+	option     struct {
+		Help    bool `long:"help"`
+		Version bool `long:"version"`
 	}
 	usage = fmt.Sprintf(`Usage: %s [OPTIONS] COMMAND [ARG...]
 
@@ -24,8 +27,13 @@ Commands:
 
 Options:
       --help             Display this help and exit
+      --version          Display version and exit
 `, progName)
 )
+
+func versionText() string {
+	return fmt.Sprintf("%s version %s, build %s", progName, version, commitHash)
+}
 
 type GeneralOption struct {
 	User     string `short:"u" long:"user"`
@@ -153,6 +161,10 @@ func main() {
 	}
 	if option.Help {
 		fmt.Fprintln(os.Stderr, usage)
+		os.Exit(0)
+	}
+	if option.Version {
+		fmt.Fprintln(os.Stderr, versionText())
 		os.Exit(0)
 	}
 	if err := run(args); err != nil {

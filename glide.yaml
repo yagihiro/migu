@@ -1,0 +1,6 @@
+package: github.com/astronoka/migu
+import:
+- package: github.com/go-sql-driver/mysql
+- package: github.com/howeyc/gopass
+- package: github.com/jessevdk/go-flags
+- package: github.com/naoina/go-stringutil
