@@ -6,7 +6,7 @@ import (
 	"go/token"
 	"strings"
 
-	"github.com/naoina/migu/dialect"
+	"github.com/astronoka/migu/dialect"
 )
 
 // Index is table index

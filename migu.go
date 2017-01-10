@@ -13,8 +13,8 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/astronoka/migu/dialect"
 	"github.com/naoina/go-stringutil"
-	"github.com/naoina/migu/dialect"
 )
 
 // Sync synchronizes the schema between Go's struct and the database.

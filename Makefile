@@ -1,5 +1,5 @@
 NAME:=migu
-ORGANIZATION:=naoina
+ORGANIZATION:=astronoka
 PROJECT_PATH:=github.com/$(ORGANIZATION)/$(NAME)
 
 BUILD_DIR:=$(CURDIR)/_build

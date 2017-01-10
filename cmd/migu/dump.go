@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/naoina/migu"
+	"github.com/astronoka/migu"
 )
 
 type dump struct {

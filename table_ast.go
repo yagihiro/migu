@@ -7,7 +7,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/naoina/migu/dialect"
+	"github.com/astronoka/migu/dialect"
 )
 
 type TableAST struct {

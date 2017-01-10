@@ -1,4 +1,4 @@
-# Migu [![Build Status](https://travis-ci.org/naoina/migu.svg?branch=master)](https://travis-ci.org/naoina/migu)
+# Migu [![Build Status](https://travis-ci.org/astronoka/migu.svg?branch=master)](https://travis-ci.org/astronoka/migu)
 
 Database schema migration tool for [Go](http://golang.org).
 
@@ -8,7 +8,7 @@ This tool is inspired by [Ridgepole](https://github.com/winebarrel/ridgepole).
 
 ## Installation
 
-    go get -u github.com/naoina/migu/cmd/migu
+    go get -u github.com/astronoka/migu/cmd/migu
 
 ## Basic usage
 

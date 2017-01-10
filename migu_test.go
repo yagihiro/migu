@@ -8,8 +8,8 @@ import (
 	"sort"
 	"testing"
 
+	"github.com/astronoka/migu"
 	_ "github.com/go-sql-driver/mysql"
-	"github.com/naoina/migu"
 )
 
 var db *sql.DB
