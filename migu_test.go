@@ -15,11 +15,18 @@ import (
 var db *sql.DB
 
 func init() {
-	var err error
-	db, err = sql.Open("mysql", "travis@/migu_test")
+	// https://github.com/go-sql-driver/mysql/#dsn-data-source-name
+	user := "migu_test"
+	password := "xue7AO3p!"
+	host := "127.0.0.1"
+	port := "3306"
+	schema := "migu_test"
+	dsn := fmt.Sprintf("%s:%s@tcp(%s:%s)/%s?charset=utf8&parseTime=True", user, password, host, port, schema)
+	_db, err := sql.Open("mysql", dsn)
 	if err != nil {
 		panic(err)
 	}
+	db = _db
 }
 
 func before(t *testing.T) {
