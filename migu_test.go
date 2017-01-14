@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"database/sql"
 	"fmt"
+	"os"
 	"reflect"
 	"sort"
 	"testing"
@@ -15,18 +16,19 @@ import (
 var db *sql.DB
 
 func init() {
-	// https://github.com/go-sql-driver/mysql/#dsn-data-source-name
-	user := "migu_test"
-	password := "xue7AO3p!"
-	host := "127.0.0.1"
-	port := "3306"
-	schema := "migu_test"
-	dsn := fmt.Sprintf("%s:%s@tcp(%s:%s)/%s?charset=utf8&parseTime=True", user, password, host, port, schema)
-	_db, err := sql.Open("mysql", dsn)
+	fmt.Println("aaa: " + env("MYSQL_56_DSN", ""))
+	_db, err := sql.Open("mysql", env("MYSQL_56_DSN", ""))
 	if err != nil {
 		panic(err)
 	}
 	db = _db
+}
+
+func env(key, valueIfNotFound string) string {
+	if value, exist := os.LookupEnv(key); exist {
+		return value
+	}
+	return valueIfNotFound
 }
 
 func before(t *testing.T) {
@@ -74,7 +76,13 @@ func TestDiffWithSrc(t *testing.T) {
 		"*time.Time":      "DATETIME",
 	}
 	for t1, s1 := range types {
+		fmt.Println("types 1")
+		fmt.Println(t1)
+		fmt.Println(s1)
 		for t2, s2 := range types {
+			fmt.Println("types 2")
+			fmt.Println(t2)
+			fmt.Println(s2)
 			if err := testDiffWithSrc(t, t1, s1, t2, s2); err != nil {
 				t.Error(err)
 				continue

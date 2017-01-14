@@ -10,3 +10,11 @@ services:
       MYSQL_USER: migu_test
       MYSQL_PASSWORD: xue7AO3p!
       MYSQL_DATABASE: migu_test
+  build-go-package:
+    image: astronoka/build-go-package
+    working_dir: /go/src/github.com/astronoka/migu
+    volumes:
+      - ./:/go/src/github.com/astronoka/migu
+      - ./_build/bin:/go/bin
+    environment:
+      MYSQL_56_DSN: migu_test:xue7AO3p!@tcp(database:3306)/migu_test?charset=utf8&parseTime=True

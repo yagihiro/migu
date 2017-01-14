@@ -16,16 +16,8 @@ VENDORING_TARGET:=$(FAKE_TARGET_DIR)/vendoring
 BUILD_CONTAINER_TARGET:=$(CONTAINER_TARGET_DIR)/build-go-package
 BUILD_CONTAINER_IMAGE:=$(ORGANIZATION)/build-go-package:latest
 
-# default docker network (use `bridge` if not specify)
-DOCKER_NETWORK?=bridge
-
 # run build container shortcut
-WITH_BUILD_CONTAINER:=docker run --rm \
-	--volume $(CURDIR):/go/src/$(PROJECT_PATH) \
-	--volume $(ARTIFACT_BIN_DIR):/go/bin \
-	--workdir /go/src/$(PROJECT_PATH) \
-	--network $(DOCKER_NETWORK) \
-	$(BUILD_CONTAINER_IMAGE)
+WITH_BUILD_CONTAINER:=docker-compose run --rm build-go-package
 
 # go src files without vendoring
 GO_SRCS:=$(shell find $(CURDIR) -type f -name '*.go' -not -path "$(CURDIR)/vendor/*" -not -path "$(CURDIR)/.glide/*")
@@ -44,6 +36,14 @@ CMD_BINS:=$(addprefix $(ARTIFACT_BIN_DIR)/, $(CMD_NAMES))
 
 .PHONY: all
 all: $(CMD_BINS)
+
+.PHONY: test
+test: $(VENDORING_TARGET) database
+	$(WITH_BUILD_CONTAINER) go test $(glide novendor)
+
+.PHONY: database
+database:
+	docker-compose up -d database
 
 $(ARTIFACT_BIN_DIR)/%: $(BUILD_CONTAINER_TARGET) $(VENDORING_TARGET) $(GO_SRCS)
 	@echo ✨ Build $(@F)
