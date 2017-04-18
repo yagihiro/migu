@@ -132,6 +132,11 @@ func (schema *columnSchema) GoFieldTypes() ([]string, error) {
 			return []string{"*float32", "*float64", "sql.NullFloat64"}, nil
 		}
 		return []string{"float32", "float64"}, nil
+	case "float":
+		if schema.isNullable() {
+			return []string{"*float32", "sql.NullFloat64"}, nil
+		}
+		return []string{"float32"}, nil
 	default:
 		return nil, fmt.Errorf("BUG: unexpected data type: %s", schema.DataType)
 	}
