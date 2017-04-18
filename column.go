@@ -58,7 +58,7 @@ func (schema *columnSchema) fieldAST() (*ast.Field, error) {
 	if len(tags) > 0 {
 		field.Tag = &ast.BasicLit{
 			Kind:  token.STRING,
-			Value: fmt.Sprintf("`migu:\"%s\"`", strings.Join(tags, tagSeparater)),
+			Value: fmt.Sprintf("`migu:c:\"%s\"`", strings.Join(tags, tagSeparater)),
 		}
 	}
 	if schema.ColumnComment != "" {

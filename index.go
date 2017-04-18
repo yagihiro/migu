@@ -44,7 +44,7 @@ func (index *Index) AsASTField(indexNo int) (*ast.Field, error) {
 	if len(tags) > 0 {
 		field.Tag = &ast.BasicLit{
 			Kind:  token.STRING,
-			Value: fmt.Sprintf("`migu:\"%s\"`", strings.Join(tags, tagSeparater)),
+			Value: fmt.Sprintf("`migu:i:\"%s\"`", strings.Join(tags, tagSeparater)),
 		}
 	}
 	return field, nil
