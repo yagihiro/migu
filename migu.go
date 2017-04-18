@@ -351,7 +351,6 @@ func makeTableASTMap(filename string, src interface{}) (map[string]*TableAST, er
 		case *ast.TypeSpec:
 			if t, ok := x.Type.(*ast.StructType); ok {
 				tableName := x.Name.Name
-				fmt.Printf("===name: %s\n", tableName)
 				isIndex := false
 				if strings.HasSuffix(x.Name.Name, "Index") {
 					tableName = strings.TrimSuffix(x.Name.Name, "Index")
