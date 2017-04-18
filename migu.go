@@ -13,8 +13,9 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/astronoka/migu/dialect"
+	"github.com/azer/snakecase"
 	"github.com/naoina/go-stringutil"
+	"github.com/yagihiro/migu/dialect"
 )
 
 // Sync synchronizes the schema between Go's struct and the database.
@@ -350,6 +351,7 @@ func makeTableASTMap(filename string, src interface{}) (map[string]*TableAST, er
 		case *ast.TypeSpec:
 			if t, ok := x.Type.(*ast.StructType); ok {
 				tableName := x.Name.Name
+				fmt.Printf("===name: %s\n", tableName)
 				isIndex := false
 				if strings.HasSuffix(x.Name.Name, "Index") {
 					tableName = strings.TrimSuffix(x.Name.Name, "Index")
@@ -605,9 +607,9 @@ func toStructPublicFieldName(s string) string {
 }
 
 func toSchemaTableName(s string) string {
-	return stringutil.ToSnakeCase(s)
+	return snakecase.SnakeCase(s)
 }
 
 func toSchemaFieldName(s string) string {
-	return stringutil.ToSnakeCase(s)
+	return snakecase.SnakeCase(s)
 }
