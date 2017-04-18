@@ -138,7 +138,7 @@ func (schema *columnSchema) GoFieldTypes() ([]string, error) {
 		}
 		return []string{"float32"}, nil
 	default:
-		return nil, fmt.Errorf("BUG: unexpected data type: %s", schema.DataType)
+		return nil, fmt.Errorf("BUG: unexpected data type: '%s'", schema.DataType)
 	}
 }
 

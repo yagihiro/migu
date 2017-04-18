@@ -14,7 +14,7 @@ import (
 var (
 	progName   = filepath.Base(os.Args[0])
 	version    = "v0.0.0"
-	commitHash = "deadbeaf"
+	commitHash = "DEADBEAF"
 	option     struct {
 		Help    bool `long:"help"`
 		Version bool `long:"version"`
